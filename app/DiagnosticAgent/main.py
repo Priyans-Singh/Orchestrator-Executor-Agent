@@ -1,3 +1,5 @@
+import json
+
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from opentelemetry.instrumentation.langchain import LangchainInstrumentor
@@ -8,6 +10,7 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, Part
 from bedrock_agentcore.runtime import serve_a2a
 from model.load import load_model
+from specialist_envelope import build_diagnostic_envelope, failed_diagnostic_envelope
 
 LangchainInstrumentor().instrument()
 
@@ -21,10 +24,9 @@ def add_numbers(a: int, b: int) -> int:
 tools = [add_numbers]
 
 
-SYSTEM_PROMPT = """
-You are a helpful assistant. Use tools when appropriate.
-
-"""
+SYSTEM_PROMPT = """You write a concise, non-load-bearing narrative for a diagnostic
+envelope. Do not introduce facts, findings, values, or recommendations beyond the
+structured result supplied in the user message."""
 
 model = load_model()
 graph = create_react_agent(model, tools=tools, prompt=SYSTEM_PROMPT)
@@ -42,12 +44,57 @@ class LangGraphA2AExecutor(AgentExecutor):
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue, task.id, task.context_id)
 
-        user_text = context.get_user_input()
-        result = await self.graph.ainvoke({"messages": [("user", user_text)]})
-        response = result["messages"][-1].content
+        await updater.start_work(
+            updater.new_agent_message([Part(text="Validating the diagnostic delegation request.")])
+        )
+        envelope = self._build_envelope(context.get_user_input(), task.id, task.context_id)
+        if envelope["status"] in {"complete", "partial"}:
+            await updater.start_work(
+                updater.new_agent_message([Part(text="Producing the optional diagnostic narrative.")])
+            )
+            try:
+                envelope["narrative"] = await self._generate_narrative(envelope)
+            except Exception:
+                envelope["narrative"] = None
 
-        await updater.add_artifact([Part(text=response)])
-        await updater.complete()
+        await updater.add_artifact([Part(text=json.dumps(envelope))], name="diagnostic-envelope")
+        if envelope["status"] == "needs_clarification":
+            await updater.requires_input()
+        elif envelope["status"] == "failed":
+            await updater.failed()
+        else:
+            await updater.complete()
+
+    @staticmethod
+    def _build_envelope(user_text: str, task_id: str, context_id: str) -> dict:
+        if not isinstance(user_text, str):
+            return failed_diagnostic_envelope("Delegation request text must be a string.")
+        try:
+            request = json.loads(user_text)
+        except json.JSONDecodeError:
+            request = {}
+        if not isinstance(request, dict):
+            request = {}
+        if request.get("task_id") != task_id or request.get("context_id") != context_id:
+            request = {}
+        if not request:
+            request = {"task_id": task_id, "context_id": context_id}
+        return build_diagnostic_envelope(request)
+
+    async def _generate_narrative(self, envelope: dict) -> str:
+        result = await self.graph.ainvoke(
+            {
+                "messages": [
+                    (
+                        "user",
+                        "Write only a short narrative for this envelope. It is not authoritative:\n"
+                        + json.dumps(envelope),
+                    )
+                ]
+            }
+        )
+        content = result["messages"][-1].content
+        return content if isinstance(content, str) else json.dumps(content)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         pass
