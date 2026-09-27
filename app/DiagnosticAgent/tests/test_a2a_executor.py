@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import unittest
 
 from main import LangGraphA2AExecutor, graph
+from sheet_fixture import READ, reader
+import os
 
 
 class RecordingQueue:
@@ -25,7 +27,7 @@ class FailingNarrativeGraph:
 
 class DiagnosticA2AExecutorTests(unittest.IsolatedAsyncioTestCase):
     async def test_emits_progress_before_a_single_json_envelope_artifact(self) -> None:
-        executor = LangGraphA2AExecutor(NarrativeGraph())
+        executor = LangGraphA2AExecutor(NarrativeGraph(), reader)
         context = SimpleNamespace(
             current_task=SimpleNamespace(id="task-001", context_id="investigation-001"),
             get_user_input=lambda: json.dumps(
@@ -35,6 +37,7 @@ class DiagnosticA2AExecutorTests(unittest.IsolatedAsyncioTestCase):
                     "objective": "Investigate the revenue decline.",
                     "scope": {
                         "metric": "revenue",
+                        "read": READ,
                         "time_range": {"start": "2026-01-01", "end": "2026-01-31"},
                     },
                 }
@@ -53,8 +56,9 @@ class DiagnosticA2AExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("complete", envelope["status"])
         self.assertEqual("Model-authored optional narrative.", envelope["narrative"])
 
+    @unittest.skipUnless(os.environ.get("RUN_BEDROCK_INTEGRATION") == "1", "Opt-in live Bedrock integration")
     async def test_default_suite_calls_the_real_bedrock_model(self) -> None:
-        executor = LangGraphA2AExecutor(graph)
+        executor = LangGraphA2AExecutor(graph, reader)
         context = SimpleNamespace(
             current_task=SimpleNamespace(id="task-real-model", context_id="investigation-real-model"),
             get_user_input=lambda: json.dumps(
@@ -64,6 +68,7 @@ class DiagnosticA2AExecutorTests(unittest.IsolatedAsyncioTestCase):
                     "objective": "Investigate the revenue decline.",
                     "scope": {
                         "metric": "revenue",
+                        "read": READ,
                         "time_range": {"start": "2026-01-01", "end": "2026-01-31"},
                     },
                 }
@@ -84,7 +89,7 @@ class DiagnosticA2AExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(envelope["narrative"].strip())
 
     async def test_model_failure_keeps_the_deterministic_envelope_complete(self) -> None:
-        executor = LangGraphA2AExecutor(FailingNarrativeGraph())
+        executor = LangGraphA2AExecutor(FailingNarrativeGraph(), reader)
         context = SimpleNamespace(
             current_task=SimpleNamespace(id="task-failure", context_id="investigation-failure"),
             get_user_input=lambda: json.dumps(
@@ -94,6 +99,7 @@ class DiagnosticA2AExecutorTests(unittest.IsolatedAsyncioTestCase):
                     "objective": "Investigate the revenue decline.",
                     "scope": {
                         "metric": "revenue",
+                        "read": READ,
                         "time_range": {"start": "2026-01-01", "end": "2026-01-31"},
                     },
                 }
@@ -114,7 +120,7 @@ class DiagnosticA2AExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(envelope["narrative"])
 
     async def test_non_text_payload_returns_a_failed_envelope(self) -> None:
-        executor = LangGraphA2AExecutor(NarrativeGraph())
+        executor = LangGraphA2AExecutor(NarrativeGraph(), reader)
         context = SimpleNamespace(
             current_task=SimpleNamespace(id="task-non-text", context_id="investigation-non-text"),
             get_user_input=lambda: None,

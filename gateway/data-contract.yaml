@@ -1,0 +1,11 @@
+{
+  "name": "RcaSheets",
+  "spreadsheet_id": "fixture-sheet",
+  "operations": ["get-metadata", "get-values"],
+  "tabs": {
+    "Performance": {
+      "columns": {"A": "date", "B": "revenue", "C": "segment", "D": "orders"}
+    }
+  },
+  "limits": {"max_rows": 100, "max_columns": 4, "max_cells": 400}
+}

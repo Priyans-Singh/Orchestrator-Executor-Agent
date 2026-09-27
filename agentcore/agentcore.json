@@ -34,14 +34,64 @@
       "runtimeVersion": "PYTHON_3_14",
       "networkMode": "PUBLIC",
       "protocol": "A2A"
+    },
+    {
+      "name": "EvidenceGuard",
+      "build": "Container",
+      "entrypoint": "main.py",
+      "codeLocation": "app/EvidenceGuard/",
+      "runtimeVersion": "PYTHON_3_14",
+      "networkMode": "PUBLIC",
+      "protocol": "A2A",
+      "authorizerType": "CUSTOM_JWT",
+      "authorizerConfiguration": {
+        "customJwtAuthorizer": {
+          "discoveryUrl": "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_rP0WP4oPU/.well-known/openid-configuration",
+          "allowedClients": [
+            "2r0nohpcrjnhsi2pvc1ck1f7on"
+          ]
+        }
+      }
     }
   ],
   "memories": [],
   "knowledgeBases": [],
-  "credentials": [],
+  "credentials": [
+    {
+      "authorizerType": "OAuthCredentialProvider",
+      "name": "GoogleSheetsReadOAuth",
+      "vendor": "CustomOauth2",
+      "usage": "outbound",
+      "discoveryUrl": "https://accounts.google.com/.well-known/openid-configuration",
+      "scopes": [
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
+      ]
+    }
+  ],
   "evaluators": [],
   "onlineEvalConfigs": [],
-  "agentCoreGateways": [],
+  "agentCoreGateways": [
+    {
+      "name": "DataGateway",
+      "description": "The sole read-only path to the fixed RCA Sheets fixture.",
+      "protocolType": "MCP",
+      "authorizerType": "AWS_IAM",
+      "enableSemanticSearch": false,
+      "exceptionLevel": "NONE",
+      "targets": [
+        {
+          "name": "SheetsRead",
+          "targetType": "openApiSchema",
+          "schemaSource": {"inline": {"path": "docs/google-sheets-read.openapi.yaml"}},
+          "outboundAuth": {
+            "type": "OAUTH",
+            "credentialName": "GoogleSheetsReadOAuth",
+            "scopes": ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+          }
+        }
+      ]
+    }
+  ],
   "policyEngines": [],
   "configBundles": [],
   "abTests": [],

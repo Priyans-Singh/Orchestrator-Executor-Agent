@@ -1,5 +1,10 @@
 # DiagnosticAgent
 
+The Diagnostic analyst can only read Sheets through the IAM-authenticated
+`DataGateway` MCP endpoint. It receives neither Google credentials nor a
+direct Sheets client. Its structured findings use the gateway's contract
+semantic fields and source ranges; narrative remains non-authoritative.
+
 An A2A (Agent-to-Agent) agent deployed on Amazon Bedrock AgentCore using LangChain + LangGraph.
 
 ## Overview

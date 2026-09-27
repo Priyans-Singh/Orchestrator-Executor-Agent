@@ -1,0 +1,48 @@
+openapi: 3.0.3
+info:
+  title: Approved Google Sheets reads
+  version: 1.0.0
+servers:
+  - url: https://sheets.googleapis.com/v4
+paths:
+  /spreadsheets/{spreadsheetId}:
+    get:
+      operationId: get-metadata
+      summary: Read approved Sheet header metadata.
+      parameters:
+        - $ref: '#/components/parameters/spreadsheetId'
+        - name: ranges
+          in: query
+          required: true
+          schema: {type: string}
+        - name: fields
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Sheet metadata}
+  /spreadsheets/{spreadsheetId}/values/{range}:
+    get:
+      operationId: get-values
+      summary: Read an approved bounded Sheet range.
+      parameters:
+        - $ref: '#/components/parameters/spreadsheetId'
+        - name: range
+          in: path
+          required: true
+          schema: {type: string}
+        - name: majorDimension
+          in: query
+          schema: {type: string, enum: [ROWS]}
+        - name: valueRenderOption
+          in: query
+          schema: {type: string, enum: [UNFORMATTED_VALUE]}
+      responses:
+        '200': {description: Range values}
+components:
+  parameters:
+    spreadsheetId:
+      name: spreadsheetId
+      in: path
+      required: true
+      schema: {type: string}

@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from datetime import date
 from hashlib import sha256
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable
+from math import isfinite
+import re
 
 
-def build_diagnostic_envelope(request: Mapping[str, Any]) -> dict[str, Any]:
+def build_diagnostic_envelope(request: Mapping[str, Any], reader: Callable | None = None) -> dict[str, Any]:
     """Return a deterministic Diagnostic envelope for one delegation request.
 
-    The fake adapter is deliberately the source of every load-bearing field.
-    A caller may later add a narrative, but no response consumer must parse it.
+    Load-bearing fields come from a policy-gated gateway response.
+    A caller may add a narrative, but consumers must never parse it.
     """
     try:
         normalized = _normalize_request(request)
@@ -28,10 +30,26 @@ def build_diagnostic_envelope(request: Mapping[str, Any]) -> dict[str, Any]:
             ["What ISO-8601 start and end dates should define the investigation time range?"]
         )
 
+    read = request["scope"].get("read")
+    if read is None:
+        return _clarification_envelope(["Which approved spreadsheet and bounded tab/range should I read?"])
+    if (not isinstance(read, Mapping) or set(read) != {"operation", "arguments"}
+            or read["operation"] not in {"get-metadata", "get-values"}
+            or not isinstance(read["arguments"], dict)):
+        return failed_diagnostic_envelope("Invalid Sheet read request.")
+    try:
+        if reader is None:
+            raise ValueError("No Data Gateway is configured.")
+        result = reader(read["operation"], read["arguments"])
+        findings = _sheet_findings(normalized, result)
+    except Exception:
+        return failed_diagnostic_envelope("The policy-gated Sheet read could not be completed.")
+    if not findings:
+        return _clarification_envelope(["The approved range contains no matching numeric observations; clarify the range or metric."])
     status = "complete" if time_range is not None else "partial"
     return {
         "status": status,
-        "findings": [_fake_finding(normalized, is_partial=status == "partial")],
+        "findings": findings,
         "clarifying_questions": [],
         "narrative": None,
     }
@@ -113,36 +131,70 @@ def _normalize_time_range(value: Any) -> dict[str, str] | None:
     return {"start": start_date.isoformat(), "end": end_date.isoformat()}
 
 
-def _fake_finding(normalized: Mapping[str, Any], *, is_partial: bool) -> dict[str, Any]:
-    time_range = normalized["time_range"]
-    canonical_time_range = time_range or {"start": None, "end": None}
-    identity = "|".join(
-        [
-            normalized["metric"],
-            normalized["segment"] or "",
-            canonical_time_range["start"] or "",
-            canonical_time_range["end"] or "",
-        ]
-    )
-    digest = sha256(identity.encode("utf-8")).hexdigest()
-    value = round((int(digest[:8], 16) % 100_000) / 100, 2)
-    confidence = round(0.55 + ((int(digest[8:12], 16) % 36) / 100), 2)
-    assumptions = ["Value and confidence come from the deterministic fake Sheet adapter."]
-    if is_partial:
-        assumptions.append("time_range was not supplied; this is confirmed best-effort analysis.")
+def _sheet_findings(scope: Mapping[str, Any], result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    fields = result["fields"]
+    if scope["metric"] not in fields.values():
+        raise ValueError("Metric is not in the approved columns.")
+    match = re.search(r"!([A-Z]+)([0-9]+):([A-Z]+)([0-9]+)$", result["range"])
+    if match is None:
+        raise ValueError("Gateway response requires a bounded source range.")
+    first_column, first_row, last_column, last_row = match.groups()
 
-    return {
-        "id": f"finding-{digest[:16]}",
-        "claim": f"Synthetic diagnostic signal for {normalized['metric']}.",
-        "metric": normalized["metric"],
-        "segment": normalized["segment"],
-        "time_range": canonical_time_range,
-        "value": float(value),
-        "basis": "Deterministic fake Sheet adapter; no Google Sheets data was read.",
-        "source_pointer": f"fake-sheet://{normalized['metric']}/{normalized['segment'] or 'all'}",
-        "confidence": confidence,
-        "assumptions": assumptions,
-    }
+    def index(column: str) -> int:
+        number = 0
+        for char in column:
+            number = number * 26 + ord(char) - ord("A") + 1
+        return number
+
+    offset = index(first_column)
+    if result["operation"] == "get-metadata":
+        column = next(column for column, semantic in fields.items() if semantic == scope["metric"])
+        cell = result["range"].rsplit("!", 1)[0] + f"!{column}{first_row}"
+        pointer = f"sheet://{result['spreadsheet_id']}/{cell}"
+        digest = sha256((pointer + "|" + scope["metric"]).encode()).hexdigest()
+        return [{
+            "id": f"finding-{digest[:16]}",
+            "claim": f"Approved header for {scope['metric']} is present at {cell}.",
+            "metric": scope["metric"], "segment": None,
+            "time_range": scope["time_range"] or {"start": None, "end": None},
+            "value": 1.0, "basis": cell, "source_pointer": pointer,
+            "confidence": 1.0,
+            "assumptions": [
+                "Header discovery confirms the approved semantic field; 1.0 is a presence marker, not a business metric value."
+            ],
+        }]
+    rows = result["data"].get("values", [])
+    if (not isinstance(rows, list) or len(rows) > int(last_row) - int(first_row) + 1
+            or any(not isinstance(row, list) or len(row) > index(last_column) - offset + 1 for row in rows)):
+        raise ValueError("Gateway returned data outside the requested range.")
+    findings = []
+    for row_offset, row in enumerate(rows):
+        values = {semantic: row[index(column) - offset]
+                  for column, semantic in fields.items() if index(column) - offset < len(row)}
+        if scope["time_range"]:
+            observed_date = date.fromisoformat(values["date"])
+            if not (scope["time_range"]["start"] <= observed_date.isoformat() <= scope["time_range"]["end"]):
+                continue
+        if scope["segment"] is not None and values.get("segment") != scope["segment"]:
+            continue
+        value = values.get(scope["metric"])
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not isfinite(value):
+            continue
+        column = next(column for column, semantic in fields.items() if semantic == scope["metric"])
+        cell = result["range"].rsplit("!", 1)[0] + f"!{column}{int(first_row) + row_offset}"
+        pointer = f"sheet://{result['spreadsheet_id']}/{cell}"
+        digest = sha256((pointer + "|" + scope["metric"]).encode()).hexdigest()
+        assumptions = ["Direct cell observation; no aggregation or causal inference was performed."]
+        if scope["time_range"] is None:
+            assumptions.append("time_range was not supplied; confirmed best-effort analysis.")
+        findings.append({
+            "id": f"finding-{digest[:16]}", "claim": f"Observed {scope['metric']} at {cell}.",
+            "metric": scope["metric"], "segment": scope["segment"],
+            "time_range": scope["time_range"] or {"start": None, "end": None},
+            "value": float(value), "basis": cell, "source_pointer": pointer,
+            "confidence": 1.0, "assumptions": assumptions,
+        })
+    return findings
 
 
 def _clarification_envelope(questions: list[str]) -> dict[str, Any]:

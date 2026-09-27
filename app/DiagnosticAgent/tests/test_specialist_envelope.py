@@ -1,7 +1,14 @@
 import json
 import unittest
 
-from specialist_envelope import build_diagnostic_envelope
+from specialist_envelope import build_diagnostic_envelope as build_envelope
+from sheet_fixture import READ, reader
+
+
+def build_diagnostic_envelope(request):
+    if isinstance(request.get("scope"), dict):
+        request["scope"]["read"] = READ
+    return build_envelope(request, reader)
 
 
 class DiagnosticEnvelopeTests(unittest.TestCase):
@@ -28,12 +35,12 @@ class DiagnosticEnvelopeTests(unittest.TestCase):
             {"start": "2026-01-01", "end": "2026-01-31"}, finding["time_range"]
         )
         self.assertIsInstance(finding["id"], str)
-        self.assertEqual("Synthetic diagnostic signal for revenue.", finding["claim"])
+        self.assertEqual("Observed revenue at 'Performance'!B2.", finding["claim"])
         self.assertIsInstance(finding["value"], float)
         self.assertGreaterEqual(finding["confidence"], 0)
         self.assertLessEqual(finding["confidence"], 1)
-        self.assertIn("fake", finding["basis"].lower())
-        self.assertEqual("fake-sheet://revenue/enterprise", finding["source_pointer"])
+        self.assertEqual("'Performance'!B2", finding["basis"])
+        self.assertEqual("sheet://fixture-sheet/'Performance'!B2", finding["source_pointer"])
         self.assertTrue(finding["assumptions"])
         self.assertEqual([], envelope["clarifying_questions"])
 
