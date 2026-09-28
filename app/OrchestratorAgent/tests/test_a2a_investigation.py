@@ -82,28 +82,12 @@ class A2AInvestigationTests(unittest.IsolatedAsyncioTestCase):
             resumed_author.previous["previous_clarification"],
         )
 
-    async def test_default_langgraph_wiring_runs_with_only_model_boundary_replaced(self):
+    async def test_default_langgraph_wiring_uses_the_live_diagnostic_a2a_adapter(self):
         from unittest.mock import patch
-        from langchain_core.messages import AIMessage
         from author import build_investigation
+        from diagnostic_a2a import DiagnosticA2AAdapter
 
-        class ModelAdapter:
-            async def ainvoke(self, messages):
-                data = json.loads(messages[-1][1])
-                if "question" in data:
-                    return AIMessage(content=json.dumps({
-                        "objective": data["question"], "specialists": ["diagnostic"],
-                        "scope": {"metric": "revenue", "time_range": {
-                            "start": "2026-01-01", "end": "2026-01-31"}}}))
-                return AIMessage(content=json.dumps({
-                    "narrative": "Synthetic revenue fell 12%; validate against real data.",
-                    "recommended_actions": ["Validate against the production report."],
-                    "clarifying_questions": []}))
-
-        with patch("model.load.load_model", return_value=ModelAdapter()):
+        with patch("author.DiagnosticA2AAdapter", wraps=DiagnosticA2AAdapter) as diagnostic:
             investigation = build_investigation()
-        events = [e async for e in investigation.stream("Investigate January revenue", "t", "c")]
-        result = events[-1]["result"]
-        self.assertEqual("complete", result["investigation_status"])
-        self.assertEqual(-12.0, result["findings"][0]["value"])
-        self.assertEqual("Synthetic revenue fell 12%; validate against real data.", result["narrative"])
+        diagnostic.assert_called_once_with()
+        self.assertIsInstance(investigation.specialists["diagnostic"], DiagnosticA2AAdapter)

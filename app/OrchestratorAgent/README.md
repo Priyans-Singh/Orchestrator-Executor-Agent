@@ -14,15 +14,19 @@ makes it complete. A partial specialist envelope requires a retry with explicit
 best-effort confirmation. Invalid envelopes and specialist/model errors fail
 closed without exposing provider exception text.
 
-## Adapter milestone (issue #12)
+## Specialist transports
 
 `Investigation` accepts an `Author` and named `Specialist` adapters. Specialists
-stream progress strings followed by exactly one envelope. The default diagnostic
-adapter serves only synthetic all-segment revenue for January 2026: December 100,
-January 88, a 12% decline. Other scopes ask for clarification. The default evidence
-adapter returns a clearly labeled synthetic report. Neither accesses Sheets,
-Gateway, the web, or AWS specialists. These fixtures are demonstration data, not
-real RCA evidence. Live specialist transport and data access remain separate work.
+stream progress strings followed by exactly one envelope. The default Diagnostic
+adapter calls the live Diagnostic A2A runtime using `DIAGNOSTIC_AGENT_URL` and a
+`DIAGNOSTIC_AGENT_JWT` bearer token. It maps the Investigation `task_id` and
+`context_id` to the A2A message, relays only Diagnostic progress and its envelope,
+and never lets the specialist address the user. It sets OpenTelemetry baggage
+`context_id`; AgentCore instrumentation carries W3C trace headers. Trace fields do
+not belong in delegation JSON.
+
+The evidence adapter remains a clearly labelled synthetic fixture. It does not
+access the web or AWS specialists, and is not real RCA evidence.
 
 The tool-free LangGraph model authors plans, narrative, actions, and questions.
 Code owns delegation order, status, confidence, validation, and copying results.
@@ -51,8 +55,10 @@ uv run python main.py
 ```
 
 The endpoint serves A2A on port 9000. The default author uses Bedrock and needs
-its usual IAM/model access. Example question: “Investigate revenue for January
-1–31, 2026 across all segments.”
+its usual IAM/model access. Configure `DIAGNOSTIC_AGENT_URL` to the deployed
+Diagnostic A2A endpoint and `DIAGNOSTIC_AGENT_JWT` to a Cognito token accepted by
+the shared CUSTOM_JWT authorizer. Example question: “Investigate revenue for
+January 1–31, 2026 across all segments.”
 
 ## Validate without AWS
 
@@ -60,11 +66,11 @@ From this directory:
 
 ```bash
 uv run python -m unittest discover -s tests
-uvx ty check investigation.py main.py author.py specialists.py --python .venv/bin/python
+uvx ty check investigation.py main.py author.py diagnostic_a2a.py specialists.py --python .venv/bin/python
 ```
 
-Tests exercise the Investigation seam, including the A2A executor, using offline
-specialist and model adapters. They require neither AWS credentials nor a live
-Sheet, and cover initial calls, streamed progress, clarification resume in a new
-executor, unchanged findings, minimum confidence, failure handling, and evidence
-linkage.
+Tests exercise the Investigation seam with offline adapters and exercise the live
+Diagnostic transport through a recording A2A client. They require neither AWS
+credentials nor a live Sheet, and cover initial calls, streamed progress,
+clarification resume in a new executor, unchanged findings, minimum confidence,
+failure handling, and evidence linkage.

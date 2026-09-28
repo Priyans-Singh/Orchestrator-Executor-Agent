@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 from typing import Any
 
+from diagnostic_a2a import DiagnosticA2AAdapter
 from investigation import Investigation
 
 
@@ -57,7 +58,7 @@ def build_investigation() -> Investigation:
     from langgraph.graph import END, START, StateGraph
     from opentelemetry.instrumentation.langchain import LangchainInstrumentor
     from model.load import load_model
-    from specialists import DiagnosticAdapter, EvidenceAdapter
+    from specialists import EvidenceAdapter
 
     LangchainInstrumentor().instrument()
     model = load_model()
@@ -75,6 +76,6 @@ def build_investigation() -> Investigation:
     builder.add_edge("author", END)
     graph = builder.compile()
     return Investigation(GraphAuthor(graph), {
-        "diagnostic": DiagnosticAdapter(),
+        "diagnostic": DiagnosticA2AAdapter(),
         "evidence": EvidenceAdapter(),
     })

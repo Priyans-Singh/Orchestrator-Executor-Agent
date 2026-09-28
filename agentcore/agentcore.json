@@ -33,7 +33,16 @@
       "codeLocation": "app/DiagnosticAgent/",
       "runtimeVersion": "PYTHON_3_14",
       "networkMode": "PUBLIC",
-      "protocol": "A2A"
+      "protocol": "A2A",
+      "authorizerType": "CUSTOM_JWT",
+      "authorizerConfiguration": {
+        "customJwtAuthorizer": {
+          "discoveryUrl": "https://cognito-idp.us-west-2.amazonaws.com/us-west-2_rP0WP4oPU/.well-known/openid-configuration",
+          "allowedClients": [
+            "2r0nohpcrjnhsi2pvc1ck1f7on"
+          ]
+        }
+      }
     },
     {
       "name": "EvidenceGuard",
