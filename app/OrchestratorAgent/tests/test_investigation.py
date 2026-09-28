@@ -57,6 +57,72 @@ class InvestigationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["Validate the conversion sample before acting."], result["recommended_actions"])
 
 
+class MemoryAdapter:
+    def __init__(self, recalled=None):
+        self.recalled = recalled or []
+        self.retrieves = []
+        self.turns = []
+        self.episodes = []
+
+    async def retrieve_for_planning(self, context_id, query):
+        self.retrieves.append((context_id, query))
+        return copy.deepcopy(self.recalled)
+
+    async def write_turn(self, context_id, agent_name, content):
+        self.turns.append((context_id, agent_name, copy.deepcopy(content)))
+
+    async def write_episode(self, context_id, outcome):
+        self.episodes.append((context_id, copy.deepcopy(outcome)))
+
+
+class MemoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_only_orchestrator_retrieves_during_planning_and_all_turns_are_written(self):
+        class Author(AuthorAdapter):
+            async def plan(self, question, previous, recalled=None):
+                self.recalled = recalled
+                return await super().plan(question, previous)
+
+        author = Author()
+        diagnostic = SpecialistAdapter({"status": "complete", "findings": FINDINGS})
+        memory = MemoryAdapter([{"content": "Similar RCA: pricing change", "score": 0.9}])
+        events = [event async for event in Investigation(
+            author, {"diagnostic": diagnostic}, memory=memory
+        ).stream("Why did revenue fall?", "task-1", "context-1")]
+
+        self.assertEqual([("context-1", "Why did revenue fall?")], memory.retrieves)
+        self.assertEqual([{"content": "Similar RCA: pricing change", "score": 0.9}], author.recalled)
+        self.assertEqual(["orchestrator", "diagnostic", "orchestrator"],
+                         [turn[1] for turn in memory.turns])
+        self.assertEqual("complete", memory.episodes[0][1]["investigation_status"])
+        self.assertEqual("complete", events[-1]["result"]["investigation_status"])
+
+    async def test_only_complete_or_partial_investigations_create_episodes(self):
+        for status in ("needs_clarification", "failed"):
+            with self.subTest(status=status):
+                memory = MemoryAdapter()
+                specialist = SpecialistAdapter({"status": status, "findings": [],
+                                                "clarifying_questions": ["What dates?"]
+                                                if status == "needs_clarification" else []})
+                events = [event async for event in Investigation(
+                    AuthorAdapter(), {"diagnostic": specialist}, memory=memory
+                ).stream("Why?", "t", "c")]
+                self.assertEqual(status, events[-1]["result"]["investigation_status"])
+                self.assertEqual([], memory.episodes)
+
+    async def test_partial_investigation_creates_an_episode(self):
+        class Author(AuthorAdapter):
+            async def plan(self, question, previous):
+                return {"objective": question, "scope": {"metric": "revenue"},
+                        "specialists": ["diagnostic"], "continuation_confirmed": True}
+
+        memory = MemoryAdapter()
+        events = [event async for event in Investigation(Author(), {
+            "diagnostic": SpecialistAdapter({"status": "partial", "findings": FINDINGS})
+        }, memory=memory).stream("Proceed", "t", "c", {"objective": "Original", "specialists": ["diagnostic"]})]
+        self.assertEqual("partial", events[-1]["result"]["investigation_status"])
+        self.assertEqual(1, len(memory.episodes))
+
+
 class StatusTests(unittest.IsolatedAsyncioTestCase):
     async def test_clarification_wins_over_failure_and_is_authored_by_orchestrator(self):
         class Author(AuthorAdapter):

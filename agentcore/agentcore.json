@@ -63,7 +63,32 @@
       }
     }
   ],
-  "memories": [],
+  "memories": [
+    {
+      "name": "InvestigationMemory",
+      "eventExpiryDuration": 30,
+      "strategies": [
+        {
+          "type": "SUMMARIZATION",
+          "name": "InvestigationSummary",
+          "namespaceTemplates": [
+            "investigations/{actorId}/summaries/{sessionId}"
+          ]
+        },
+        {
+          "type": "EPISODIC",
+          "name": "PastRcaEpisodes",
+          "namespaceTemplates": [
+            "investigations/{actorId}/episodes/{sessionId}/",
+            "investigations/{actorId}/episodes/{sessionId}/reflections"
+          ],
+          "reflectionNamespaceTemplates": [
+            "investigations/{actorId}/episodes/{sessionId}/reflections"
+          ]
+        }
+      ]
+    }
+  ],
   "knowledgeBases": [],
   "credentials": [
     {

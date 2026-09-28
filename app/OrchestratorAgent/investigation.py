@@ -6,13 +6,16 @@ from copy import deepcopy
 from math import isfinite
 from typing import Any, Protocol
 
+from memory import InvestigationMemory, NoopInvestigationMemory
+
 
 class Specialist(Protocol):
     def stream(self, request: dict[str, Any]) -> AsyncIterator[str | dict[str, Any]]: ...
 
 
 class Author(Protocol):
-    async def plan(self, question: str, previous: dict[str, Any] | None) -> dict[str, Any]: ...
+    async def plan(self, question: str, previous: dict[str, Any] | None,
+                   recalled: list[dict[str, Any]] | None = None) -> dict[str, Any]: ...
 
     async def synthesize(self, evidence: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -39,9 +42,11 @@ def _validate_envelope(envelope: dict[str, Any], prior: dict[str, Any]) -> None:
                 raise ValueError("Missing finding field")
         confidence = finding.get("confidence")
         value = finding.get("value")
-        if (type(confidence) not in (int, float) or not isfinite(confidence)
-                or not 0 <= confidence <= 1 or type(value) not in (int, float)
-                or not isfinite(value)):
+        if type(confidence) not in (int, float) or type(value) not in (int, float):
+            raise ValueError("Invalid finding value/confidence")
+        assert isinstance(confidence, (int, float))
+        assert isinstance(value, (int, float))
+        if not isfinite(confidence) or not 0 <= confidence <= 1 or not isfinite(value):
             raise ValueError("Invalid finding value/confidence")
         if ("segment" not in finding or finding["segment"] is not None
                 and not isinstance(finding["segment"], str)):
@@ -88,9 +93,18 @@ def _empty_result(narrative: str) -> dict[str, Any]:
 
 
 class Investigation:
-    def __init__(self, author: Author, specialists: dict[str, Specialist]):
+    def __init__(self, author: Author, specialists: dict[str, Specialist],
+                 memory: InvestigationMemory | None = None):
         self.author = author
         self.specialists = specialists
+        self.memory = memory or NoopInvestigationMemory()
+
+    async def _write_memory_turn(self, context_id: str, agent_name: str, content: dict[str, Any]) -> None:
+        try:
+            await self.memory.write_turn(context_id, agent_name, deepcopy(content))
+        except Exception:
+            # Memory extraction is asynchronous and deliberately non-load-bearing.
+            return
 
     async def stream(self, question: str, task_id: str, context_id: str,
                      previous: dict[str, Any] | None = None) -> AsyncIterator[dict[str, Any]]:
@@ -100,7 +114,12 @@ class Investigation:
                    "state": None}
             return
         try:
-            plan = await self.author.plan(question, deepcopy(previous))
+            recalled = await self.memory.retrieve_for_planning(context_id, question)
+            try:
+                plan = await self.author.plan(question, deepcopy(previous), deepcopy(recalled))
+            except TypeError:
+                # Preserves the established two-argument Author adapter seam.
+                plan = await self.author.plan(question, deepcopy(previous))
             if previous:
                 plan["objective"] = previous["objective"]
                 plan["specialists"] = previous["specialists"]
@@ -113,6 +132,9 @@ class Investigation:
             yield {"type": "result", "result": _empty_result("I could not plan this investigation. Please retry."),
                    "state": previous}
             return
+        await self._write_memory_turn(context_id, "orchestrator", {
+            "question": question, "plan": plan, "recalled_past_rcas": recalled,
+        })
         prior = ({"answer": question, "continuation_confirmed": plan.get("continuation_confirmed") is True}
                  if previous else {})
         findings: list[dict[str, Any]] = []
@@ -146,6 +168,7 @@ class Investigation:
             snippets.extend(envelope.get("context_snippets", []))
             statuses.append(envelope["status"])
             questions.extend(envelope.get("clarifying_questions", []))
+            await self._write_memory_turn(context_id, name, envelope)
         status = ("needs_clarification" if "needs_clarification" in statuses else
                   "failed" if "failed" in statuses else
                   "partial" if "partial" in statuses else "complete")
@@ -173,6 +196,12 @@ class Investigation:
                 result["investigation_status"] = "failed"
         if not findings:
             result["recommended_actions"] = []
+        await self._write_memory_turn(context_id, "orchestrator", {"synthesis": result})
+        if result["investigation_status"] in {"complete", "partial"}:
+            try:
+                await self.memory.write_episode(context_id, deepcopy(result))
+            except Exception:
+                pass
         state = deepcopy(plan)
         if status == "needs_clarification":
             state["previous_clarification"] = {
