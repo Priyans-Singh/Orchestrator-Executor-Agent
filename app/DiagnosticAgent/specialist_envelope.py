@@ -8,7 +8,13 @@ from typing import Any, Mapping, Callable
 from math import isfinite
 import re
 
-from math_ops import APPROVED_OPERATIONS, run_math
+
+# This is validation metadata, not a local calculator. Math execution must
+# always pass through the DataGateway MathOps target.
+APPROVED_OPERATIONS = frozenset({
+    "sum", "average", "percent_change", "group_by_aggregate", "median",
+    "stddev", "variance", "correlation", "min_max", "top_n",
+})
 
 
 def build_diagnostic_envelope(request: Mapping[str, Any], reader: Callable | None = None) -> dict[str, Any]:
@@ -262,7 +268,14 @@ def _math_finding(scope: Mapping[str, Any], result: Mapping[str, Any], findings:
         raise ValueError("Math operation is not in the data contract.")
     values = [{scope["metric"]: finding["value"]} for finding in findings]
     calculator = getattr(reader, "math", None)
-    answer = calculator(operation, values, scope["metric"], **{key: value for key, value in math.items() if key != "operation"}) if callable(calculator) else run_math(operation, values, scope["metric"], **{key: value for key, value in math.items() if key != "operation"})
+    if not callable(calculator):
+        raise ValueError("The configured Data Gateway does not expose MathOps.")
+    answer = calculator(
+        operation,
+        values,
+        scope["metric"],
+        **{key: value for key, value in math.items() if key != "operation"},
+    )
     if not isinstance(answer, (int, float)) or isinstance(answer, bool) or not isfinite(answer):
         raise ValueError("Math operation did not produce a numeric finding.")
     source_range = result["range"]

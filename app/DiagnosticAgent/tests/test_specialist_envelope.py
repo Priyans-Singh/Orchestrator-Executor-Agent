@@ -14,6 +14,7 @@ def build_diagnostic_envelope(request):
 class DiagnosticEnvelopeTests(unittest.TestCase):
     def test_over_cap_range_is_paged_then_aggregated_at_the_envelope_seam(self) -> None:
         calls = []
+        math_calls = []
 
         def paged_reader(operation, arguments):
             calls.append((operation, arguments.copy()))
@@ -30,6 +31,12 @@ class DiagnosticEnvelopeTests(unittest.TestCase):
             }
 
         paged_reader.limits = {"max_rows": 100, "max_columns": 4, "max_cells": 400}
+
+        def math(operation, rows, field, **options):
+            math_calls.append((operation, rows, field, options))
+            return 101.5
+
+        paged_reader.math = math
         envelope = build_envelope({
             "task_id": "task-001", "context_id": "investigation-001",
             "objective": "Investigate revenue.",
@@ -43,8 +50,30 @@ class DiagnosticEnvelopeTests(unittest.TestCase):
         self.assertEqual([("get-values", {"spreadsheetId": "fixture-sheet", "range": "Performance!A2:D101"}),
                           ("get-values", {"spreadsheetId": "fixture-sheet", "range": "Performance!A102:D201"})], calls)
         self.assertEqual(101.5, envelope["findings"][0]["value"])
+        self.assertEqual(
+            [("average", [{"revenue": float(row)} for row in range(2, 202)], "revenue", {})],
+            math_calls,
+        )
         self.assertIn("stitched 'Performance'!A2:D201", envelope["findings"][0]["basis"])
         self.assertIn("math average", envelope["findings"][0]["basis"])
+
+    def test_math_request_fails_when_gateway_math_target_is_unavailable(self) -> None:
+        envelope = build_envelope(
+            {
+                "task_id": "task-001", "context_id": "investigation-001",
+                "objective": "Investigate revenue.",
+                "scope": {
+                    "metric": "revenue",
+                    "time_range": {"start": "2026-01-01", "end": "2026-01-31"},
+                    "read": READ,
+                    "math": {"operation": "average"},
+                },
+            },
+            reader,
+        )
+
+        self.assertEqual("failed", envelope["status"])
+        self.assertIn("could not be completed", envelope["narrative"])
 
     def test_gateway_confirmed_alias_is_recorded_without_expanding_semantics(self) -> None:
         alias_result = {
