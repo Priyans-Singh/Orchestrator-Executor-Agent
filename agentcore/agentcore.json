@@ -49,6 +49,8 @@
       "build": "Container",
       "entrypoint": "main.py",
       "codeLocation": "app/EvidenceGuard/",
+      "buildContextPath": "./",
+      "dockerfile": "app/EvidenceGuard/Dockerfile",
       "runtimeVersion": "PYTHON_3_14",
       "networkMode": "PUBLIC",
       "protocol": "A2A",
@@ -142,6 +144,34 @@
             {"name": "correlation", "description": "Correlate two numeric fields from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}, "other_field": {"type": "string"}}, "required": ["rows", "field", "other_field"]}},
             {"name": "min_max", "description": "Find minimum and maximum from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
             {"name": "top_n", "description": "Find the highest N values from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}, "n": {"type": "integer"}}, "required": ["rows", "field"]}}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "EvidenceGateway",
+      "description": "The sole AgentCore Gateway path to managed web-search evidence.",
+      "protocolType": "MCP",
+      "authorizerType": "AWS_IAM",
+      "enableSemanticSearch": false,
+      "exceptionLevel": "NONE",
+      "targets": [
+        {
+          "name": "WebSearch",
+          "targetType": "connector",
+          "connectorId": "web-search",
+          "configurations": [
+            {
+              "name": "WebSearch",
+              "parameterValues": {
+                "domainFilter": {
+                  "exclude": [
+                    "spam.example",
+                    "misinformation.example"
+                  ]
+                }
+              }
+            }
           ]
         }
       ]

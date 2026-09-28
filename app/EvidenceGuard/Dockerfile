@@ -18,10 +18,11 @@ ENV UV_SYSTEM_PYTHON=1 \
 
 RUN useradd -m -u 1000 bedrock_agentcore
 
-COPY pyproject.toml uv.lock ./
+COPY app/EvidenceGuard/pyproject.toml app/EvidenceGuard/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY --chown=bedrock_agentcore:bedrock_agentcore . .
+COPY --chown=bedrock_agentcore:bedrock_agentcore app/EvidenceGuard/ .
+COPY --chown=bedrock_agentcore:bedrock_agentcore docs/evidence-reputation.yaml docs/evidence-reputation.yaml
 RUN uv sync --frozen --no-dev
 
 USER bedrock_agentcore

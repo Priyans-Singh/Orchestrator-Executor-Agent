@@ -1,0 +1,12 @@
+# Gateway-enforced source policy for Evidence Guard.
+hard_denylist:
+  - spam.example
+  - misinformation.example
+trusted_domain_allowlist:
+  - bls.gov
+  - census.gov
+  - bea.gov
+  - sec.gov
+  - oecd.org
+  - imf.org
+  - worldbank.org
