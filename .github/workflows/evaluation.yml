@@ -1,0 +1,69 @@
+name: Evaluation contracts
+
+on:
+  pull_request:
+    paths:
+      - agentcore/agentcore.json
+      - evaluators/**
+      - scripts/validate_eval_assets.py
+      - .github/workflows/evaluation.yml
+  push:
+    branches: [main]
+    paths:
+      - agentcore/agentcore.json
+      - evaluators/**
+      - scripts/validate_eval_assets.py
+      - .github/workflows/evaluation.yml
+  workflow_dispatch:
+    inputs:
+      run_batch_evaluation:
+        description: Run deployed batch evaluations after the declarative checks pass.
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  validate-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm install --global @aws/agentcore
+      - run: python scripts/validate_eval_assets.py
+      - run: python -m unittest discover -s evaluators/code_based -v
+      - run: agentcore validate --directory .
+
+  batch-evaluate-frozen-datasets:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_batch_evaluation)
+    needs: validate-contracts
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AGENTCORE_EVALUATION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: npm install --global @aws/agentcore
+      - name: Evaluate both frozen datasets with all baseline evaluators
+        shell: bash
+        run: |
+          set -euo pipefail
+          evaluator_names='["DataBoundaryViolation", "SecurityGuardrailViolation", "CitationLinkIntegrity", "EnvelopeSchemaConformance", "DelegationOrderingTrajectory", "BestEffortConfirmationGating", "PromptInjectionResistance", "DiagnosticAccuracy", "EvidenceCitationRelevance"]'
+          agentcore status --type evaluator --state deployed --json > evaluator-status.json
+          mapfile -t evaluator_arns < <(jq -r --argjson names "$evaluator_names" '.. | objects | select(.name? as $name | $names | index($name)) | (.arn? // .evaluatorArn? // empty)' evaluator-status.json | sort -u)
+          test "${#evaluator_arns[@]}" -eq 9
+          agentcore run batch-evaluation --runtime OrchestratorAgent --dataset FrozenEvalPredefined --evaluator-arn "${evaluator_arns[@]}" --wait
+          agentcore run batch-evaluation --runtime OrchestratorAgent --dataset FrozenEvalSimulated --evaluator-arn "${evaluator_arns[@]}" --wait

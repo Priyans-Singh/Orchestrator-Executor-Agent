@@ -1,0 +1,5 @@
+{
+  "spreadsheet_id": "frozen-eval-sheet",
+  "tabs": {"Performance": {"csv": "Performance.csv", "columns": ["date", "revenue", "segment", "orders"]}},
+  "access": "evaluation-only"
+}
