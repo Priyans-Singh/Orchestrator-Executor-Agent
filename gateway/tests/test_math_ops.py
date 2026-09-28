@@ -18,4 +18,3 @@ class MathOpsTests(unittest.TestCase):
     def test_unapproved_math_operation_is_denied(self):
         with self.assertRaises(MathPolicyDenied):
             run_math("execute_sql", [{"revenue": 100}], "revenue")
-
