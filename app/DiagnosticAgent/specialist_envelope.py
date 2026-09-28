@@ -8,6 +8,8 @@ from typing import Any, Mapping, Callable
 from math import isfinite
 import re
 
+from math_ops import APPROVED_OPERATIONS, run_math
+
 
 def build_diagnostic_envelope(request: Mapping[str, Any], reader: Callable | None = None) -> dict[str, Any]:
     """Return a deterministic Diagnostic envelope for one delegation request.
@@ -40,12 +42,18 @@ def build_diagnostic_envelope(request: Mapping[str, Any], reader: Callable | Non
     try:
         if reader is None:
             raise ValueError("No Data Gateway is configured.")
-        result = reader(read["operation"], read["arguments"])
+        result = _read_with_pagination(reader, read["operation"], read["arguments"])
         findings = _sheet_findings(normalized, result)
     except Exception:
         return failed_diagnostic_envelope("The policy-gated Sheet read could not be completed.")
     if not findings:
         return _clarification_envelope(["The approved range contains no matching numeric observations; clarify the range or metric."])
+    math = request["scope"].get("math")
+    if math is not None:
+        try:
+            findings = _math_finding(normalized, result, findings, math, reader)
+        except (TypeError, ValueError, KeyError):
+            return failed_diagnostic_envelope("The requested math operation is not approved or could not be completed.")
     status = "complete" if time_range is not None else "partial"
     return {
         "status": status,
@@ -133,6 +141,10 @@ def _normalize_time_range(value: Any) -> dict[str, str] | None:
 
 def _sheet_findings(scope: Mapping[str, Any], result: Mapping[str, Any]) -> list[dict[str, Any]]:
     fields = result["fields"]
+    approved_semantics = result.get("approved_semantics", list(fields.values()))
+    if (not isinstance(approved_semantics, list) or not all(isinstance(item, str) for item in approved_semantics)
+            or any(semantic not in approved_semantics for semantic in fields.values())):
+        raise ValueError("Gateway attempted to expand the data contract.")
     if scope["metric"] not in fields.values():
         raise ValueError("Metric is not in the approved columns.")
     match = re.search(r"!([A-Z]+)([0-9]+):([A-Z]+)([0-9]+)$", result["range"])
@@ -185,6 +197,12 @@ def _sheet_findings(scope: Mapping[str, Any], result: Mapping[str, Any]) -> list
         pointer = f"sheet://{result['spreadsheet_id']}/{cell}"
         digest = sha256((pointer + "|" + scope["metric"]).encode()).hexdigest()
         assumptions = ["Direct cell observation; no aggregation or causal inference was performed."]
+        header_mapping = result.get("header_mappings", {}).get(column, {})
+        if isinstance(header_mapping, Mapping) and header_mapping.get("semantic") == scope["metric"] and header_mapping.get("is_alias") is True:
+            header = header_mapping.get("header")
+            if not isinstance(header, str) or not header:
+                raise ValueError("Alias mapping is invalid.")
+            assumptions.append(f"Header alias '{header}' was mapped to approved semantic field {scope['metric']}.")
         if scope["time_range"] is None:
             assumptions.append("time_range was not supplied; confirmed best-effort analysis.")
         findings.append({
@@ -195,6 +213,74 @@ def _sheet_findings(scope: Mapping[str, Any], result: Mapping[str, Any]) -> list
             "confidence": 1.0, "assumptions": assumptions,
         })
     return findings
+
+
+def _read_with_pagination(reader: Callable, operation: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Split a legitimate oversized values range before it reaches the gateway."""
+    if operation != "get-values":
+        return reader(operation, dict(arguments))
+    value = arguments.get("range")
+    match = re.fullmatch(r"((?:'[^']*(?:''[^']*)*')|[A-Za-z_][A-Za-z0-9_ ]*)!([A-Z]+)([1-9][0-9]*):([A-Z]+)([1-9][0-9]*)", value if isinstance(value, str) else "")
+    if match is None:
+        return reader(operation, dict(arguments))
+    tab, first_column, first_row, last_column, last_row = match.groups()
+    columns = _column_number(last_column) - _column_number(first_column) + 1
+    limits = getattr(reader, "limits", {"max_rows": 100, "max_columns": 4, "max_cells": 400})
+    if not isinstance(limits, Mapping):
+        raise ValueError("Data Gateway limits are unavailable.")
+    max_rows = min(int(limits["max_rows"]), int(limits["max_cells"]) // columns)
+    if columns > int(limits["max_columns"]) or max_rows < 1:
+        return reader(operation, dict(arguments))
+    start, end = int(first_row), int(last_row)
+    results = []
+    for page_start in range(start, end + 1, max_rows):
+        page_end = min(end, page_start + max_rows - 1)
+        page_arguments = {**arguments, "range": f"{tab}!{first_column}{page_start}:{last_column}{page_end}"}
+        results.append(reader(operation, page_arguments))
+    if len(results) == 1:
+        return results[0]
+    first = results[0]
+    if any(result.get("fields") != first.get("fields") for result in results):
+        raise ValueError("Paged reads returned incompatible contract fields.")
+    values = []
+    for result in results:
+        page_values = result.get("data", {}).get("values")
+        if not isinstance(page_values, list):
+            raise ValueError("Paged read returned invalid rows.")
+        values.extend(page_values)
+    canonical_tab = first["range"].rsplit("!", 1)[0]
+    return {**first, "range": f"{canonical_tab}!{first_column}{start}:{last_column}{end}",
+            "data": {**first.get("data", {}), "values": values}, "stitched": True}
+
+
+def _math_finding(scope: Mapping[str, Any], result: Mapping[str, Any], findings: list[dict[str, Any]], math: Any, reader: Callable) -> list[dict[str, Any]]:
+    if not isinstance(math, Mapping) or set(math) - {"operation", "n", "group_field", "other_field"} or not isinstance(math.get("operation"), str):
+        raise ValueError("Invalid math request.")
+    operation = math["operation"]
+    allowed = result.get("math_operations", list(APPROVED_OPERATIONS))
+    if operation not in APPROVED_OPERATIONS or operation not in allowed:
+        raise ValueError("Math operation is not in the data contract.")
+    values = [{scope["metric"]: finding["value"]} for finding in findings]
+    calculator = getattr(reader, "math", None)
+    answer = calculator(operation, values, scope["metric"], **{key: value for key, value in math.items() if key != "operation"}) if callable(calculator) else run_math(operation, values, scope["metric"], **{key: value for key, value in math.items() if key != "operation"})
+    if not isinstance(answer, (int, float)) or isinstance(answer, bool) or not isfinite(answer):
+        raise ValueError("Math operation did not produce a numeric finding.")
+    source_range = result["range"]
+    pointer = f"sheet://{result['spreadsheet_id']}/{source_range}"
+    digest = sha256((pointer + "|" + scope["metric"] + "|" + operation).encode()).hexdigest()
+    return [{"id": f"finding-{digest[:16]}", "claim": f"Computed {operation} for {scope['metric']}.",
+             "metric": scope["metric"], "segment": scope["segment"],
+             "time_range": scope["time_range"] or {"start": None, "end": None}, "value": float(answer),
+             "basis": f"{'stitched ' if result.get('stitched') else ''}{source_range}; math {operation}",
+             "source_pointer": pointer, "confidence": min(finding["confidence"] for finding in findings),
+             "assumptions": ["Approved math operation ran only on rows returned by the Data Gateway."]}]
+
+
+def _column_number(column: str) -> int:
+    number = 0
+    for character in column:
+        number = number * 26 + ord(character) - ord("A") + 1
+    return number
 
 
 def _clarification_envelope(questions: list[str]) -> dict[str, Any]:

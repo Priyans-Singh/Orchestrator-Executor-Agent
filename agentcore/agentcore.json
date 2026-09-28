@@ -122,6 +122,27 @@
             "credentialName": "GoogleSheetsReadOAuth",
             "scopes": ["https://www.googleapis.com/auth/spreadsheets.readonly"]
           }
+        },
+        {
+          "name": "MathOps",
+          "targetType": "lambda",
+          "compute": {
+            "host": "Lambda",
+            "implementation": {"language": "Python", "path": "gateway/math_ops.py", "handler": "handler"},
+            "pythonVersion": "PYTHON_3_12"
+          },
+          "toolDefinitions": [
+            {"name": "sum", "description": "Sum a numeric field from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
+            {"name": "average", "description": "Average a numeric field from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
+            {"name": "percent_change", "description": "Calculate percent change across supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
+            {"name": "group_by_aggregate", "description": "Aggregate supplied rows by a field.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}, "group_field": {"type": "string"}}, "required": ["rows", "field", "group_field"]}},
+            {"name": "median", "description": "Find the median of a numeric field from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
+            {"name": "stddev", "description": "Find standard deviation of a numeric field from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
+            {"name": "variance", "description": "Find variance of a numeric field from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
+            {"name": "correlation", "description": "Correlate two numeric fields from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}, "other_field": {"type": "string"}}, "required": ["rows", "field", "other_field"]}},
+            {"name": "min_max", "description": "Find minimum and maximum from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}}, "required": ["rows", "field"]}},
+            {"name": "top_n", "description": "Find the highest N values from supplied rows.", "inputSchema": {"type": "object", "properties": {"rows": {"type": "array"}, "field": {"type": "string"}, "n": {"type": "integer"}}, "required": ["rows", "field"]}}
+          ]
         }
       ]
     }

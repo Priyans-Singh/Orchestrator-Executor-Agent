@@ -40,6 +40,19 @@ def request(operation="get-values", range_value="Performance!A2:B2"):
 
 
 class FindingsTests(unittest.TestCase):
+    def test_metadata_maps_a_contract_alias_without_accepting_new_headers(self):
+        contract = {**CONTRACT, "header_aliases": {"date": ["Date"], "revenue": ["Revenue", "Net Revenue"]}}
+        request_event = {"interceptorInputVersion": "1.0", "mcp": {"gatewayRequest": {"body": {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                "name": "SheetsRead___get-metadata", "arguments": {
+                    "spreadsheetId": "fixture-sheet", "ranges": "Performance!A1:B1"}}}}}}
+        request_event["mcp"]["gatewayResponse"] = {"statusCode": 200, "body": {"result": {
+            "structuredContent": {"sheets": [{"data": [{"startColumn": 0, "rowData": [{"values": [
+                {"formattedValue": "Date"}, {"formattedValue": "Net Revenue"}]}]}]}]}}}}
+        result = annotate_response(request_event, contract)["mcp"]["transformedGatewayResponse"]["body"]["result"]["structuredContent"]
+        self.assertEqual({"A": "date", "B": "revenue"}, result["fields"])
+        self.assertTrue(result["header_mappings"]["B"]["is_alias"])
+
     def test_within_contract_read_becomes_semantic_finding(self):
         gateway = PolicyGateway()
         envelope = build_diagnostic_envelope(request(), gateway)

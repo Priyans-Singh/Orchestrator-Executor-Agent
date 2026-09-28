@@ -91,6 +91,40 @@ def annotate_response(event: Mapping[str, Any], contract: Mapping[str, Any]) -> 
         arguments["range"] = arguments.pop("ranges")
     approved = SheetsPolicy(contract).authorize(operation, arguments)
     annotated = {**approved, "operation": operation, "data": data}
+    if operation == "get-metadata":
+        annotated["header_mappings"] = _header_mappings(data, approved)
+        annotated["fields"] = {column: semantic for column, semantic in approved["fields"].items()
+                               if column in annotated["header_mappings"]}
     response["body"]["result"] = {"isError": False, "structuredContent": annotated,
                                     "content": [{"type": "text", "text": json.dumps(annotated)}]}
     return {"interceptorOutputVersion": "1.0", "mcp": {"transformedGatewayResponse": response}}
+
+
+def _header_mappings(data: Any, approved: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map only contract-listed headers; unknown headers never become semantics."""
+    mappings: dict[str, dict[str, Any]] = {}
+    try:
+        grid = data["sheets"][0]["data"][0]
+        start = int(grid.get("startColumn", 0))
+        headers = grid["rowData"][0]["values"]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return mappings
+    for offset, cell in enumerate(headers):
+        header = cell.get("formattedValue") if isinstance(cell, Mapping) else None
+        column = _column_name(start + offset + 1)
+        semantic = approved["fields"].get(column)
+        default_aliases = [semantic.replace("_", " ").title()] if semantic is not None else []
+        aliases = approved["header_aliases"].get(semantic, default_aliases)
+        if not isinstance(header, str) or semantic is None or header not in aliases:
+            continue
+        mappings[column] = {"header": header, "semantic": semantic,
+                            "is_alias": header != aliases[0]}
+    return mappings
+
+
+def _column_name(number: int) -> str:
+    result = ""
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        result = chr(ord("A") + remainder) + result
+    return result

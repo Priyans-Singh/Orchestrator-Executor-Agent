@@ -12,6 +12,68 @@ def build_diagnostic_envelope(request):
 
 
 class DiagnosticEnvelopeTests(unittest.TestCase):
+    def test_over_cap_range_is_paged_then_aggregated_at_the_envelope_seam(self) -> None:
+        calls = []
+
+        def paged_reader(operation, arguments):
+            calls.append((operation, arguments.copy()))
+            start = int(arguments["range"].split("!", 1)[1].split(":")[0][1:])
+            end = int(arguments["range"].split(":")[1][1:])
+            return {
+                "operation": operation, "spreadsheet_id": "fixture-sheet", "tab": "Performance",
+                "range": "'Performance'!" + arguments["range"].split("!", 1)[1],
+                "fields": {"A": "date", "B": "revenue", "C": "segment", "D": "orders"},
+                "approved_semantics": ["date", "revenue", "segment", "orders"],
+                "math_operations": ["average"],
+                "data": {"values": [["2026-01-15", float(row), "enterprise", row]
+                                    for row in range(start, end + 1)]},
+            }
+
+        paged_reader.limits = {"max_rows": 100, "max_columns": 4, "max_cells": 400}
+        envelope = build_envelope({
+            "task_id": "task-001", "context_id": "investigation-001",
+            "objective": "Investigate revenue.",
+            "scope": {"metric": "revenue", "time_range": {"start": "2026-01-01", "end": "2026-01-31"},
+                      "read": {"operation": "get-values", "arguments": {
+                          "spreadsheetId": "fixture-sheet", "range": "Performance!A2:D201"}},
+                      "math": {"operation": "average"}},
+        }, paged_reader)
+
+        self.assertEqual("complete", envelope["status"])
+        self.assertEqual([("get-values", {"spreadsheetId": "fixture-sheet", "range": "Performance!A2:D101"}),
+                          ("get-values", {"spreadsheetId": "fixture-sheet", "range": "Performance!A102:D201"})], calls)
+        self.assertEqual(101.5, envelope["findings"][0]["value"])
+        self.assertIn("stitched 'Performance'!A2:D201", envelope["findings"][0]["basis"])
+        self.assertIn("math average", envelope["findings"][0]["basis"])
+
+    def test_gateway_confirmed_alias_is_recorded_without_expanding_semantics(self) -> None:
+        alias_result = {
+            **reader("get-values", READ["arguments"]),
+            "approved_semantics": ["date", "revenue", "segment", "orders"],
+            "header_mappings": {"B": {"header": "Net Revenue", "semantic": "revenue", "is_alias": True}},
+        }
+        envelope = build_envelope({
+            "task_id": "task-001", "context_id": "investigation-001", "objective": "Investigate revenue.",
+            "scope": {"metric": "revenue", "time_range": {"start": "2026-01-01", "end": "2026-01-31"},
+                      "read": READ},
+        }, lambda *_: alias_result)
+        finding = envelope["findings"][0]
+        self.assertEqual("revenue", finding["metric"])
+        self.assertTrue(any("Net Revenue" in assumption for assumption in finding["assumptions"]))
+
+    def test_gateway_cannot_expand_contract_with_a_new_semantic(self) -> None:
+        expanded = {
+            **reader("get-values", READ["arguments"]),
+            "fields": {"A": "date", "B": "unapproved_metric", "C": "segment", "D": "orders"},
+            "approved_semantics": ["date", "revenue", "segment", "orders"],
+        }
+        envelope = build_envelope({
+            "task_id": "task-001", "context_id": "investigation-001", "objective": "Investigate it.",
+            "scope": {"metric": "unapproved_metric", "time_range": {"start": "2026-01-01", "end": "2026-01-31"},
+                      "read": READ},
+        }, lambda *_: expanded)
+        self.assertEqual("failed", envelope["status"])
+
     def test_complete_response_has_a_schema_valid_finding(self) -> None:
         envelope = build_diagnostic_envelope(
             {

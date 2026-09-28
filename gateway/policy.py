@@ -58,4 +58,8 @@ class SheetsPolicy:
         escaped_tab = tab.replace("'", "''")
         return {"spreadsheet_id": contract["spreadsheet_id"], "tab": tab,
                 "range": f"'{escaped_tab}'!{first_column}{first_row}:{last_column}{last_row}",
-                "fields": fields}
+                "fields": fields,
+                "approved_semantics": sorted({semantic for tab_spec in contract["tabs"].values()
+                                                for semantic in tab_spec["columns"].values()}),
+                "math_operations": list(contract.get("math_operations", [])),
+                "header_aliases": deepcopy(contract.get("header_aliases", {}))}

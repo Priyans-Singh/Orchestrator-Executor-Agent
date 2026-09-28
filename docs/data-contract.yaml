@@ -2,6 +2,11 @@
   "name": "RcaSheets",
   "spreadsheet_id": "fixture-sheet",
   "operations": ["get-metadata", "get-values"],
+  "math_operations": ["sum", "average", "percent_change", "group_by_aggregate", "median", "stddev", "variance", "correlation", "min_max", "top_n"],
+  "header_aliases": {
+    "date": ["Date"], "revenue": ["Revenue", "Net Revenue"],
+    "segment": ["Segment"], "orders": ["Orders"]
+  },
   "tabs": {
     "Performance": {
       "columns": {"A": "date", "B": "revenue", "C": "segment", "D": "orders"}
