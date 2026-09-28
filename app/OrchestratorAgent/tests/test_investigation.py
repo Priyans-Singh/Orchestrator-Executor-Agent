@@ -246,13 +246,39 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
             async def plan(self, question, previous):
                 return {"objective": question, "scope": {}, "specialists": ["evidence", "diagnostic"]}
 
-        evidence = SpecialistAdapter({"status": "complete", "citations": [CITATION]})
+        calls = []
+
+        class OrderedSpecialist(SpecialistAdapter):
+            def __init__(self, name, envelope):
+                super().__init__(envelope)
+                self.name = name
+
+            async def stream(self, request):
+                calls.append(self.name)
+                async for event in super().stream(request):
+                    yield event
+
+        evidence = OrderedSpecialist("evidence", {"status": "complete", "citations": [CITATION]})
         events = [e async for e in Investigation(Author(), {
-            "diagnostic": SpecialistAdapter({"status": "complete", "findings": FINDINGS}),
+            "diagnostic": OrderedSpecialist("diagnostic", {"status": "complete", "findings": FINDINGS}),
             "evidence": evidence}).stream("Why?", "t", "c")]
+        self.assertEqual(["diagnostic", "evidence"], calls)
         self.assertEqual(FINDINGS, evidence.requests[0]["scope"]["findings"])
         self.assertEqual([CITATION], events[-1]["result"]["citations"])
         self.assertEqual(0.4, events[-1]["result"]["overall_confidence"])
+
+    async def test_sheet_only_plan_skips_evidence_guard(self):
+        class Author(AuthorAdapter):
+            async def plan(self, question, previous):
+                return {"objective": question, "scope": {"metric": "revenue"},
+                        "specialists": ["diagnostic"]}
+
+        evidence = SpecialistAdapter({"status": "complete", "context_snippets": []})
+        events = [e async for e in Investigation(Author(), {
+            "diagnostic": SpecialistAdapter({"status": "complete", "findings": FINDINGS}),
+            "evidence": evidence}).stream("Why did revenue fall?", "t", "c")]
+        self.assertEqual([], evidence.requests)
+        self.assertEqual(FINDINGS, events[-1]["result"]["findings"])
 
     async def test_standalone_context_is_not_rca_evidence_or_action_justification(self):
         class Author(AuthorAdapter):

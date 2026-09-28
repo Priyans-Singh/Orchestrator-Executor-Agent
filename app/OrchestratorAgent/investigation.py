@@ -142,7 +142,14 @@ class Investigation:
         snippets: list[dict[str, Any]] = []
         statuses: list[str] = []
         questions: list[str] = []
-        for name in sorted(set(plan["specialists"]), key=lambda name: name != "diagnostic"):
+        # The orchestrator owns all delegation.  Diagnostic is deliberately
+        # completed before Evidence Guard receives its findings; every other
+        # requested specialist keeps the planner's order after that boundary.
+        requested_specialists = list(dict.fromkeys(plan["specialists"]))
+        specialist_order = (["diagnostic"] if "diagnostic" in requested_specialists else []) + [
+            name for name in requested_specialists if name != "diagnostic"
+        ]
+        for name in specialist_order:
             request = {"task_id": task_id, "context_id": context_id,
                        "objective": plan["objective"], "scope": deepcopy(plan["scope"]),
                        "prior_context": prior}
