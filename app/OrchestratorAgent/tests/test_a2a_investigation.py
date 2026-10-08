@@ -91,3 +91,5 @@ class A2AInvestigationTests(unittest.IsolatedAsyncioTestCase):
             investigation = build_investigation()
         diagnostic.assert_called_once_with()
         self.assertIsInstance(investigation.specialists["diagnostic"], DiagnosticA2AAdapter)
+        from evidence_a2a import EvidenceA2AAdapter
+        self.assertIsInstance(investigation.specialists["evidence"], EvidenceA2AAdapter)

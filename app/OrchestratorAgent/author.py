@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from diagnostic_a2a import DiagnosticA2AAdapter
+from evidence_a2a import EvidenceA2AAdapter
 from investigation import Investigation
 
 
@@ -59,7 +60,6 @@ def build_investigation() -> Investigation:
     from langgraph.graph import END, START, StateGraph
     from opentelemetry.instrumentation.langchain import LangchainInstrumentor
     from model.load import load_model
-    from specialists import EvidenceAdapter
     from guardrail import GuardedAuthor, GuardrailPolicy
     from memory import AgentCoreInvestigationMemory
 
@@ -80,5 +80,5 @@ def build_investigation() -> Investigation:
     graph = builder.compile()
     return Investigation(GuardedAuthor(GraphAuthor(graph), GuardrailPolicy.from_environment()), {
         "diagnostic": DiagnosticA2AAdapter(),
-        "evidence": EvidenceAdapter(),
+        "evidence": EvidenceA2AAdapter(),
     }, memory=AgentCoreInvestigationMemory.from_environment())
