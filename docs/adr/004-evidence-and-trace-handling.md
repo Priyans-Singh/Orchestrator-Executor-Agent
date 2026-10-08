@@ -63,6 +63,22 @@ deferred.
 
 ## Consequences
 
+**LangGraph implementation amendment (issue #17):** The agents remain LangGraph.
+The Orchestrator uses the shared environment-configured Bedrock Guardrail via
+`ApplyGuardrail` at its input/output boundary. A current-context OpenTelemetry
+`guardrail.check` span covers each request; no Strands hook or framework
+migration is required. The same check/span implementation accepts a specialist's
+agent name without changing the shared policy ID or version. Wiring specialist
+runtimes is deferred beyond this ticket's Orchestrator delivery boundary.
+
+`guardrail.triggered_policies` is a JSON-encoded array containing only policy
+type, category, and confidence when the assessment supplies it. Grounding
+scores are not confidence levels. Custom words, regexes, and denied topics use
+fixed category labels rather than configured strings. Detected policies are
+included when observing without blocking. Failed API checks emit an error
+status and action `ERROR`, without provider exception text. Default handoff
+and tool-call instrumentation is unchanged; trace redaction remains deferred.
+
 - The final result distinguishes internal evidence from external context.
 - Guardrails complement, rather than replace, gateway authorization.
 - Trace redaction is deferred, not designed away: the MVP's traces are not

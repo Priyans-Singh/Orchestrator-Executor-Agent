@@ -60,13 +60,44 @@ Diagnostic A2A endpoint and `DIAGNOSTIC_AGENT_JWT` to a Cognito token accepted b
 the shared CUSTOM_JWT authorizer. Example question: “Investigate revenue for
 January 1–31, 2026 across all segments.”
 
+## Shared Guardrail and event spans
+
+Set `GUARDRAIL_ID` and `GUARDRAIL_VERSION` to the same Bedrock Guardrail policy
+for every agent. Version defaults to `DRAFT`; use a published version for a
+stable policy. Without an ID, local investigations skip Guardrail checks.
+The runtime role needs `bedrock:ApplyGuardrail` access to that policy.
+
+The Orchestrator checks the question before planning and its authored synthesis
+before returning it. An intervention fails the investigation; blocked input
+never reaches specialists and blocked synthesis is not released.
+
+Each call emits a `guardrail.check` span within the current trace, covering the
+Bedrock request. It records `guardrail.id`, `guardrail.version`, `guardrail.source`,
+`guardrail.action`, `agent.name`, and `guardrail.triggered_policies` as a JSON
+array of policy type/category/confidence objects. Confidence is included only
+when Bedrock provides it; grounding scores are not relabelled as confidence.
+Detected policies are included even when configured to observe rather than block.
+Custom words, regexes, and denied topics use `CUSTOM_WORD`, `REGEX`, and `DENY`
+labels so their configured strings cannot become span attributes.
+
+Failed Bedrock checks propagate the failure and emit an error-status span with
+action `ERROR` and no exception text. Neither flagged content, matches, response
+output, nor provider error text is attached to this span.
+
+`GuardrailPolicy.from_environment(agent_name=...)` reuses this check/span wiring
+with a specialist's name and the same shared policy. Specialist runtime wiring
+is deferred; issue #17's delivery boundary is the Orchestrator path.
+LangGraph and default handoff/tool instrumentation remain in place. Business
+traces remain unredacted and are restricted to the single-user secure
+observability view described in ADR 004.
+
 ## Validate without AWS
 
 From this directory:
 
 ```bash
 uv run python -m unittest discover -s tests
-uvx ty check investigation.py main.py author.py diagnostic_a2a.py specialists.py --python .venv/bin/python
+uvx ty check investigation.py main.py author.py diagnostic_a2a.py specialists.py guardrail.py --python .venv/bin/python
 ```
 
 Tests exercise the Investigation seam with offline adapters and exercise the live
