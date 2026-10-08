@@ -60,11 +60,17 @@ class AgentCoreInvestigationMemory:
 
     async def retrieve_for_planning(self, context_id: str, query: str) -> list[dict[str, Any]]:
         def retrieve() -> list[dict[str, Any]]:
-            records = self._session(context_id).search_long_term_memories(
-                query=query,
-                namespace_path=f"investigations/{self.actor_id}/episodes",
-            )
-            return [dict(record.items()) if hasattr(record, "items") else dict(record) for record in records]
+            session = self._session(context_id)
+            # The session summary lets a long Investigation continue without
+            # resending history; episodes recall similar past RCAs.
+            records: list[dict[str, Any]] = []
+            for namespace in (
+                f"investigations/{self.actor_id}/summaries/{context_id}",
+                f"investigations/{self.actor_id}/episodes",
+            ):
+                found = session.search_long_term_memories(query=query, namespace_path=namespace)
+                records.extend(dict(r.items()) if hasattr(r, "items") else dict(r) for r in found)
+            return records
 
         return await asyncio.to_thread(retrieve)
 
