@@ -1,6 +1,9 @@
 """Evidence transport exercised through the Investigation boundary."""
 import json
+from pathlib import Path
+import sys
 import unittest
+from unittest.mock import patch
 
 from a2a.helpers import new_text_message
 from a2a.types import Artifact, StreamResponse, TaskArtifactUpdateEvent
@@ -40,6 +43,7 @@ class EvidenceInvestigationTests(unittest.IsolatedAsyncioTestCase):
             "evidence": EvidenceA2AAdapter("https://evidence.example", "jwt", connect),
         }).stream("Why did revenue fall?", "task", "context")]
         self.assertEqual(FINDINGS, requests[0]["scope"]["findings"])
+        self.assertEqual("demand", requests[0]["scope"]["query"])
         self.assertEqual([CITATION], events[-1]["result"]["citations"])
         self.assertEqual("complete", events[-1]["result"]["investigation_status"])
 
@@ -95,3 +99,41 @@ class EvidenceInvestigationTests(unittest.IsolatedAsyncioTestCase):
         }).stream("What happened to demand?", "task", "context")]
         self.assertEqual("failed", events[-1]["result"]["investigation_status"])
         self.assertEqual([], events[-1]["result"]["context_snippets"])
+
+    async def test_delegated_search_is_accepted_by_the_real_evidence_envelope(self):
+        evidence_path = str(Path(__file__).parents[2] / "EvidenceGuard")
+        with patch("sys.path", [evidence_path, *sys.path]):
+            from specialist_envelope import build_evidence_envelope
+
+        for scope in ({"topic": "demand"}, {"query": "demand"}):
+            with self.subTest(scope=scope):
+                class Author(AuthorAdapter):
+                    async def plan(self, question, previous):
+                        return {"objective": question, "scope": scope,
+                                "specialists": ["evidence"]}
+
+                class Client:
+                    async def send_message(self, request):
+                        envelope = build_evidence_envelope(
+                            json.loads(request.message.parts[0].text),
+                            lambda query, filters=None: [{
+                                "url": "https://industry.example/report", "title": "Demand",
+                                "snippet": "Demand softened.", "publishedDate": None,
+                            }], retrieved_at="2026-01-31T12:00:00Z")
+                        yield StreamResponse(artifact_update=TaskArtifactUpdateEvent(artifact=Artifact(
+                            name="evidence-envelope", parts=[new_text_message(json.dumps(envelope)).parts[0]])))
+
+                    async def close(self):
+                        pass
+
+                async def connect(url, token):
+                    return Client()
+
+                events = [event async for event in Investigation(Author(), {
+                    "evidence": EvidenceA2AAdapter("https://evidence.example", "jwt", connect),
+                }).stream("What happened to demand?", "task", "context")]
+                result = events[-1]["result"]
+                self.assertEqual("complete", result["investigation_status"])
+                self.assertEqual("demand", result["context_snippets"][0]["query"])
+                self.assertIsNone(result["overall_confidence"])
+                self.assertEqual([], result["recommended_actions"])
